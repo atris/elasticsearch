@@ -299,6 +299,12 @@ public final class IndexSettings {
     public static final Setting<Boolean> INDEX_SEARCH_THROTTLED = Setting.boolSetting("index.search.throttled", false,
         Property.IndexScope, Property.PrivateIndex, Property.Dynamic);
 
+    /**
+     * Marks an index to allow segments of index to be read in parallel
+     */
+    public static final Setting<Boolean> INDEX_SEGMENTS_READ_PARALLEL = Setting.boolSetting("index.segments_read_parallel", true,
+        Property.IndexScope, Property.PrivateIndex, Property.Dynamic);
+
     private final Index index;
     private final Version version;
     private final Logger logger;
@@ -354,6 +360,7 @@ public final class IndexSettings {
     private volatile int maxTermsCount;
     private volatile String defaultPipeline;
     private volatile boolean searchThrottled;
+    private volatile boolean segmentsReadInParallel;
 
     /**
      * The maximum number of refresh listeners allows on this shard.
@@ -438,6 +445,7 @@ public final class IndexSettings {
         numberOfShards = settings.getAsInt(IndexMetaData.SETTING_NUMBER_OF_SHARDS, null);
 
         this.searchThrottled = INDEX_SEARCH_THROTTLED.get(settings);
+        this.segmentsReadInParallel = INDEX_SEGMENTS_READ_PARALLEL.get(settings);
         this.queryStringLenient = QUERY_STRING_LENIENT_SETTING.get(settings);
         this.queryStringAnalyzeWildcard = QUERY_STRING_ANALYZE_WILDCARD.get(nodeSettings);
         this.queryStringAllowLeadingWildcard = QUERY_STRING_ALLOW_LEADING_WILDCARD.get(nodeSettings);
@@ -523,6 +531,7 @@ public final class IndexSettings {
         scopedSettings.addSettingsUpdateConsumer(DEFAULT_PIPELINE, this::setDefaultPipeline);
         scopedSettings.addSettingsUpdateConsumer(INDEX_SOFT_DELETES_RETENTION_OPERATIONS_SETTING, this::setSoftDeleteRetentionOperations);
         scopedSettings.addSettingsUpdateConsumer(INDEX_SEARCH_THROTTLED, this::setSearchThrottled);
+        scopedSettings.addSettingsUpdateConsumer(INDEX_SEGMENTS_READ_PARALLEL, this::setSearchSegmentsParallel);
     }
 
     private void setSearchIdleAfter(TimeValue searchIdleAfter) { this.searchIdleAfter = searchIdleAfter; }
@@ -949,5 +958,16 @@ public final class IndexSettings {
 
     private void setSearchThrottled(boolean searchThrottled) {
         this.searchThrottled = searchThrottled;
+    }
+
+    /**
+     * Returns true if the this index can be read in segment-parallel manner
+     */
+    public boolean isParallelSegmentReadEnabled() {
+        return segmentsReadInParallel;
+    }
+
+    private void setSearchSegmentsParallel(boolean segmentsReadInParallel) {
+        this.segmentsReadInParallel = segmentsReadInParallel;
     }
 }

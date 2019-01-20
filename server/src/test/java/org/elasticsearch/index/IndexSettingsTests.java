@@ -561,4 +561,14 @@ public class IndexSettingsTests extends ESTestCase {
                 Settings.builder(), Settings.builder(), "index"));
         assertThat(error.getMessage(), equalTo("final index setting [index.soft_deletes.enabled], not updateable"));
     }
+
+    public void testUpdateParallelSegmentReads() {
+        IndexMetaData metaData = newIndexMeta("index", Settings.builder().put(IndexMetaData.SETTING_VERSION_CREATED, Version.CURRENT)
+                .put(IndexSettings.INDEX_SEGMENTS_READ_PARALLEL.getKey(), false).build());
+        IndexSettings settings = new IndexSettings(metaData, Settings.EMPTY);
+        assertEquals(false, settings.isParallelSegmentReadEnabled());
+        settings.updateIndexMetaData(
+                newIndexMeta("index", Settings.builder().put(IndexSettings.INDEX_SEGMENTS_READ_PARALLEL.getKey(), true).build()));
+        assertEquals(true, settings.isParallelSegmentReadEnabled());
+    }
 }

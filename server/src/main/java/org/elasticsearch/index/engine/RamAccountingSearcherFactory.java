@@ -23,16 +23,20 @@ import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SegmentReader;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.IndexSearcher.LeafSlice;
 import org.apache.lucene.search.SearcherFactory;
 import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.common.lucene.Lucene;
 import org.elasticsearch.indices.breaker.CircuitBreakerService;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
 
 /**
  * Searcher factory extending {@link EngineSearcherFactory} that tracks the
@@ -40,16 +44,99 @@ import java.util.Set;
  */
 final class RamAccountingSearcherFactory extends SearcherFactory {
 
+    private static final int MAX_DOCS_PER_SLICE = 250_000;
+    private static final int MAX_SEGMENTS_PER_SLICE = 5;
+
     private final CircuitBreakerService breakerService;
+    private final ExecutorService executorService;
 
     RamAccountingSearcherFactory(CircuitBreakerService breakerService) {
         this.breakerService = breakerService;
+        this.executorService = null;
+    }
+
+    RamAccountingSearcherFactory(CircuitBreakerService breakerService,
+            ExecutorService executorService) {
+        this.breakerService = breakerService;
+        this.executorService = executorService;
+    }
+
+    /** Holds one group of LeafReaderContext. */
+    private static class Leaves {
+        public final List<LeafReaderContext> leaves = new ArrayList<>();
+
+        public Leaves(LeafReaderContext ctx) {
+            leaves.add(ctx);
+        }
+
+        public LeafSlice toSlice() {
+            return new LeafSlice(leaves.toArray(new LeafReaderContext[0]));
+        }
+    }
+
+    /** Groups small leaves together so we can search them more efficiently with a single thread. */
+    LeafSlice[] getSearchSlices(List<LeafReaderContext> leaves) {
+        // Make a copy so we can sort:
+        leaves = new ArrayList<>(leaves);
+
+        // Sort by maxDoc, descending:
+        Collections.sort(leaves,
+                new Comparator<LeafReaderContext>() {
+                    @Override
+                    public int compare(LeafReaderContext a, LeafReaderContext b) {
+                        return -Integer.compare(a.reader().maxDoc(),
+                                                b.reader().maxDoc());
+                    }
+                });
+
+        // Coalesce leaves into slices with >= 250K docs, or 5 leaves, whichever comes first, so we don't
+        // dispatch threads on tiny-ish segments:
+        final List<Leaves> groupedLeaves = new ArrayList<>();
+        long docSum = 0;
+        Leaves group = null;
+        for (LeafReaderContext ctx : leaves) {
+            if (ctx.reader().maxDoc() > MAX_DOCS_PER_SLICE) {
+                assert group == null;
+                groupedLeaves.add(new Leaves(ctx));
+            } else {
+                if (group == null) {
+                    group = new Leaves(ctx);
+                    groupedLeaves.add(group);
+                } else {
+                    group.leaves.add(ctx);
+                }
+
+                docSum += ctx.reader().maxDoc();
+                if (group.leaves.size() >= MAX_SEGMENTS_PER_SLICE || docSum > MAX_DOCS_PER_SLICE) {
+                    group = null;
+                    docSum = 0;
+                }
+            }
+        }
+
+        LeafSlice[] slices = new LeafSlice[groupedLeaves.size()];
+        int upto = 0;
+        for (Leaves currentLeaf : groupedLeaves) {
+            slices[upto++] = currentLeaf.toSlice();
+        }
+
+        return slices;
     }
 
     @Override
     public IndexSearcher newSearcher(IndexReader reader, IndexReader previousReader) throws IOException {
         processReaders(reader, previousReader);
-        return super.newSearcher(reader, previousReader);
+
+        if (executorService != null) {
+            return new IndexSearcher(reader, executorService) {
+                @Override
+                protected LeafSlice[] slices(List<LeafReaderContext> leaves) {
+                    return getSearchSlices(leaves);
+                }
+            };
+        }
+
+        return new IndexSearcher(reader);
     }
 
     public void processReaders(IndexReader reader, IndexReader previousReader) {

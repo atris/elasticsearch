@@ -579,8 +579,11 @@ public class InternalEngine extends Engine {
         try {
             try {
                 final DirectoryReader directoryReader = ElasticsearchDirectoryReader.wrap(DirectoryReader.open(indexWriter), shardId);
+                SearcherFactory searcherFactory;
+
                 internalSearcherManager = new SearcherManager(directoryReader,
-                        new RamAccountingSearcherFactory(engineConfig.getCircuitBreakerService()));
+                        new RamAccountingSearcherFactory(engineConfig.getCircuitBreakerService(),
+                                engineConfig.getIndexSettings().isParallelSegmentReadEnabled() ? engineConfig.getThreadPool().executor(ThreadPool.Names.SEGMENTS_READ) : null));
                 lastCommittedSegmentInfos = store.readLastCommittedSegmentsInfo();
                 ExternalSearcherManager externalSearcherManager = new ExternalSearcherManager(internalSearcherManager,
                     externalSearcherFactory);
@@ -2379,6 +2382,7 @@ public class InternalEngine extends Engine {
         }
     }
 
+    @Override
     public void onSettingsChanged() {
         mergeScheduler.refreshConfig();
         // config().isEnableGcDeletes() or config.getGcDeletesInMillis() may have changed:
@@ -2396,6 +2400,7 @@ public class InternalEngine extends Engine {
         softDeletesPolicy.setRetentionOperations(indexSettings.getSoftDeleteRetentionOperations());
     }
 
+    @Override
     public MergeStats getMergeStats() {
         return mergeScheduler.stats();
     }

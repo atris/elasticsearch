@@ -194,6 +194,7 @@ public class UpdateThreadPoolSettingsTests extends ESThreadPoolTestCase {
             ThreadPoolInfo groups = threadPool.info();
             boolean foundPool1 = false;
             boolean foundPool2 = false;
+            boolean foundPool3 = false;
             outer:
             for (ThreadPool.Info info : groups) {
                 if ("my_pool1".equals(info.getName())) {
@@ -205,6 +206,8 @@ public class UpdateThreadPoolSettingsTests extends ESThreadPoolTestCase {
                     assertThat(info.getMin(), equalTo(1));
                     assertThat(info.getMax(), equalTo(1));
                     assertThat(info.getQueueSize().singles(), equalTo(1L));
+                } else if ("segment_read".equals(info.getName())) {
+                    foundPool3 = true;
                 } else {
                     for (Field field : Names.class.getFields()) {
                         if (info.getName().equalsIgnoreCase(field.getName())) {
@@ -217,6 +220,7 @@ public class UpdateThreadPoolSettingsTests extends ESThreadPoolTestCase {
             }
             assertThat(foundPool1, is(true));
             assertThat(foundPool2, is(true));
+            assertThat(foundPool3, is(true));
         } finally {
             terminateThreadPoolIfNeeded(threadPool);
         }
